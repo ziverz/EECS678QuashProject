@@ -10,6 +10,10 @@
 #include "execute.h"
 
 #include <stdio.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/wait.h>
 
 #include "quash.h"
 
@@ -20,6 +24,18 @@
 #define IMPLEMENT_ME()                                                  \
   fprintf(stderr, "IMPLEMENT ME: %s(line %d): %s()\n", __FILE__, __LINE__, __FUNCTION__)
 
+typedef struct Job {
+  int id;
+  pid_t* pids;
+  bool* finished;
+  size_t process_count;
+  pid_t first_pid;
+  char* command;
+  struct Job* next;
+} Job;
+
+static Job* job_list = NULL;
+static int next_job_id = 1;
 /***************************************************************************
  * Interface Functions
  ***************************************************************************/
