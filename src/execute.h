@@ -162,4 +162,13 @@ void run_jobs();
  */
 void run_script(CommandHolder* holders);
 
+/**
+ * @brief Create a process
+ *
+ * @param holder A command holder
+ *
+ * @return The process id of the created process
+ */
+pid_t create_process(CommandHolder holder);
+
 #endif

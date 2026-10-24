@@ -1,0 +1,14 @@
+==93547== Memcheck, a memory error detector
+==93547== Copyright (C) 2002-2022, and GNU GPL'd, by Julian Seward et al.
+==93547== Using Valgrind-3.22.0 and LibVEX; rerun with -h for copyright info
+==93547== Command: /home/molly_mas/quash/EECS678QuashProject/quash
+==93547== 
+==93547== 
+==93547== HEAP SUMMARY:
+==93547==     in use at exit: 0 bytes in 0 blocks
+==93547==   total heap usage: 10 allocs, 10 frees, 23,966 bytes allocated
+==93547== 
+==93547== All heap blocks were freed -- no leaks are possible
+==93547== 
+==93547== For lists of detected and suppressed errors, rerun with: -s
+==93547== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)

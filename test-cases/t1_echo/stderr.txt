@@ -1,0 +1,30 @@
+==93314== Memcheck, a memory error detector
+==93314== Copyright (C) 2002-2022, and GNU GPL'd, by Julian Seward et al.
+==93314== Using Valgrind-3.22.0 and LibVEX; rerun with -h for copyright info
+==93314== Command: /home/molly_mas/quash/EECS678QuashProject/quash
+==93314== 
+==93801== 
+==93801== HEAP SUMMARY:
+==93801==     in use at exit: 4 bytes in 1 blocks
+==93801==   total heap usage: 9 allocs, 8 frees, 25,998 bytes allocated
+==93801== 
+==93801== LEAK SUMMARY:
+==93801==    definitely lost: 0 bytes in 0 blocks
+==93801==    indirectly lost: 0 bytes in 0 blocks
+==93801==      possibly lost: 0 bytes in 0 blocks
+==93801==    still reachable: 4 bytes in 1 blocks
+==93801==         suppressed: 0 bytes in 0 blocks
+==93801== Reachable blocks (those to which a pointer was found) are not shown.
+==93801== To see them, rerun with: --leak-check=full --show-leak-kinds=all
+==93801== 
+==93801== For lists of detected and suppressed errors, rerun with: -s
+==93801== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+==93314== 
+==93314== HEAP SUMMARY:
+==93314==     in use at exit: 0 bytes in 0 blocks
+==93314==   total heap usage: 8 allocs, 8 frees, 21,902 bytes allocated
+==93314== 
+==93314== All heap blocks were freed -- no leaks are possible
+==93314== 
+==93314== For lists of detected and suppressed errors, rerun with: -s
+==93314== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)

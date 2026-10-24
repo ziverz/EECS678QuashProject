@@ -10,6 +10,8 @@
 #include "execute.h"
 
 #include <stdio.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +38,8 @@ typedef struct Job {
 
 static Job* job_list = NULL;
 static int next_job_id = 1;
+static int process_input_fd = -1;
+static int process_output_fd = -1;
 /***************************************************************************
  * Interface Functions
  ***************************************************************************/
@@ -83,13 +87,46 @@ void write_env(const char* env_var, const char* val) {
 
 // Check the status of background jobs
 void check_jobs_bg_status() {
-  // TODO: Check on the statuses of all processes belonging to all background
-  // jobs. This function should remove jobs from the jobs queue once all
-  // processes belonging to a job have completed.
-  IMPLEMENT_ME();
+  Job** current = &job_list;
 
-  // TODO: Once jobs are implemented, uncomment and fill the following line
-  // print_job_bg_complete(job_id, pid, cmd);
+  while (*current != NULL) {
+    Job* job = *current;
+    bool all_finished = true;
+
+    for (size_t i = 0; i < job->process_count; ++i) {
+      if (job->finished[i]) {
+        continue;
+      }
+
+      int status;
+      pid_t result = waitpid(job->pids[i], &status, WNOHANG);
+      if (result == job->pids[i]) {
+        job->finished[i] = true;
+      }
+      else if (result == -1 && errno == ECHILD) {
+        job->finished[i] = true;
+      }
+      else if (result == -1) {
+        perror("ERROR: Failed to check background job");
+      }
+
+      if (!job->finished[i]) {
+        all_finished = false;
+      }
+    }
+
+    if (!all_finished) {
+      current = &job->next;
+      continue;
+    }
+
+    print_job_bg_complete(job->id, job->first_pid, job->command);
+    *current = job->next;
+    free(job->pids);
+    free(job->finished);
+    free(job->command);
+    free(job);
+  }
 }
 
 // Prints the job id number, the process id of the first process belonging to
@@ -227,12 +264,36 @@ void run_kill(KillCommand cmd) {
   int signal = cmd.sig;
   int job_id = cmd.job;
 
-  // TODO: Remove warning silencers
-  (void) signal; // Silence unused variable warning
-  (void) job_id; // Silence unused variable warning
+  if (signal <= 0 || signal >= NSIG) {
+    fprintf(stderr, "ERROR: Invalid signal %d\n", signal);
+    return;
+  }
 
-  // TODO: Kill all processes associated with a background job
-  IMPLEMENT_ME();
+  Job* job = job_list;
+  while (job != NULL && job->id != job_id) {
+    job = job->next;
+  }
+
+  if (job == NULL) {
+    fprintf(stderr, "ERROR: No background job with id %d\n", job_id);
+    return;
+  }
+
+  for (size_t i = 0; i < job->process_count; ++i) {
+    if (job->finished[i]) {
+      continue;
+    }
+
+    if (kill(job->pids[i], signal) == -1) {
+      if (errno == ESRCH) {
+        fprintf(stderr, "ERROR: Process %d no longer exists\n",
+                job->pids[i]);
+      }
+      else {
+        perror("ERROR: Failed to send signal");
+      }
+    }
+  }
 }
 
 
@@ -258,8 +319,9 @@ void run_pwd() {
 
 // Prints all background jobs currently in the job list to stdout
 void run_jobs() {
-  // TODO: Print background jobs
-  IMPLEMENT_ME();
+  for (Job* job = job_list; job != NULL; job = job->next) {
+    print_job(job->id, job->first_pid, job->command);
+  }
 
   // Flush the buffer before returning
   fflush(stdout);
@@ -367,7 +429,7 @@ void parent_run_command(Command cmd) {
  *
  * @sa Command CommandHolder
  */
-void create_process(CommandHolder holder) {
+pid_t create_process(CommandHolder holder) {
   // Read the flags field from the parser
   bool p_in  = holder.flags & PIPE_IN;
   bool p_out = holder.flags & PIPE_OUT;
@@ -376,19 +438,84 @@ void create_process(CommandHolder holder) {
   bool r_app = holder.flags & REDIRECT_APPEND; // This can only be true if r_out
                                                // is true
 
-  // TODO: Remove warning silencers
-  (void) p_in;  // Silence unused variable warning
-  (void) p_out; // Silence unused variable warning
-  (void) r_in;  // Silence unused variable warning
-  (void) r_out; // Silence unused variable warning
-  (void) r_app; // Silence unused variable warning
+  CommandType type = get_command_holder_type(holder);
+  if (!(holder.flags & BACKGROUND) && !p_in && !p_out &&
+      (type == CD || type == EXPORT || type == KILL)) {
+    parent_run_command(holder.cmd);
+    return 0;
+  }
 
   // TODO: Setup pipes, redirects, and new process
-  IMPLEMENT_ME();
+  pid_t pid = fork();
 
-  //parent_run_command(holder.cmd); // This should be done in the parent branch of
-                                  // a fork
-  //child_run_command(holder.cmd); // This should be done in the child branch of a fork
+  if (pid < 0) {
+    perror("ERROR: fork failed");
+    return -1;
+  }
+
+  if (pid == 0) {
+    if (process_input_fd != -1 &&
+        dup2(process_input_fd, STDIN_FILENO) == -1) {
+      perror("ERROR: Failed to connect pipe input");
+      exit(EXIT_FAILURE);
+    }
+    if (process_output_fd != -1 &&
+        dup2(process_output_fd, STDOUT_FILENO) == -1) {
+      perror("ERROR: Failed to connect pipe output");
+      exit(EXIT_FAILURE);
+    }
+
+    if (r_in) {
+      int fd = open(holder.redirect_in, O_RDONLY);
+      if (fd == -1) {
+        perror("ERROR: Failed to open input file");
+        exit(EXIT_FAILURE);
+      }
+      if (dup2(fd, STDIN_FILENO) == -1) {
+        perror("ERROR: Failed to redirect input");
+        close(fd);
+        exit(EXIT_FAILURE);
+      }
+      close(fd);
+    }
+
+    if (r_out) {
+      int flags = O_WRONLY | O_CREAT | (r_app ? O_APPEND : O_TRUNC);
+      int fd = open(holder.redirect_out, flags, 0666);
+      if (fd == -1) {
+        perror("ERROR: Failed to open output file");
+        exit(EXIT_FAILURE);
+      }
+      if (dup2(fd, STDOUT_FILENO) == -1) {
+        perror("ERROR: Failed to redirect output");
+        close(fd);
+        exit(EXIT_FAILURE);
+      }
+      close(fd);
+    }
+
+    child_run_command(holder.cmd);
+    exit(EXIT_FAILURE);
+  }
+
+  if (process_input_fd != -1) {
+    close(process_input_fd);
+    process_input_fd = -1;
+  }
+  if (process_output_fd != -1) {
+    close(process_output_fd);
+    process_output_fd = -1;
+  }
+
+  if (!(holder.flags & BACKGROUND) && !p_in && !p_out) {
+    int status;
+
+    if (waitpid(pid, &status, 0) == -1) {
+      perror("ERROR: waitpid failed");
+    }
+  }
+
+  return pid;
 }
 
 // Run a list of commands
@@ -404,23 +531,88 @@ void run_script(CommandHolder* holders) {
     return;
   }
 
-  CommandType type;
+  size_t holder_count = 0;
+  while (get_command_holder_type(holders[holder_count]) != EOC) {
+    ++holder_count;
+  }
 
-  // Run all commands in the `holder` array
-  for (int i = 0; (type = get_command_holder_type(holders[i])) != EOC; ++i)
-    create_process(holders[i]);
+  pid_t* pids = malloc(holder_count * sizeof(pid_t));
+  if (pids == NULL) {
+    perror("ERROR: Failed to allocate process list");
+    return;
+  }
+
+  CommandType type;
+  size_t process_count = 0;
+  int previous_pipe_read = -1;
+
+  for (int i = 0; (type = get_command_holder_type(holders[i])) != EOC; ++i) {
+    int pipe_fds[2] = {-1, -1};
+    bool pipe_out = holders[i].flags & PIPE_OUT;
+
+    if (pipe_out && pipe(pipe_fds) == -1) {
+      perror("ERROR: Failed to create pipe");
+      free(pids);
+      return;
+    }
+
+    process_input_fd = previous_pipe_read;
+    process_output_fd = pipe_out ? pipe_fds[1] : -1;
+
+    pid_t pid = create_process(holders[i]);
+
+    if (pid == -1) {
+      if (pipe_fds[0] != -1) close(pipe_fds[0]);
+      if (pipe_fds[1] != -1) close(pipe_fds[1]);
+      free(pids);
+      return;
+    }
+
+    pids[process_count++] = pid;
+
+    previous_pipe_read = pipe_out ? pipe_fds[0] : -1;
+
+  }
 
   if (!(holders[0].flags & BACKGROUND)) {
-    // Not a background Job
-    // TODO: Wait for all processes under the job to complete
-    IMPLEMENT_ME();
+    for (size_t i = 0; i < process_count; ++i) {
+      if (waitpid(pids[i], NULL, 0) == -1 && errno != ECHILD) {
+        perror("ERROR: Failed to wait for process");
+      }
+    }
+    free(pids);
+    return;
   }
-  else {
-    // A background job.
-    // TODO: Push the new job to the job queue
-    IMPLEMENT_ME();
 
-    // TODO: Once jobs are implemented, uncomment and fill the following line
-    // print_job_bg_start(job_id, pid, cmd);
+  Job* job = malloc(sizeof(Job));
+  if (job == NULL) {
+    perror("ERROR: Failed to allocate background job");
+    return;
   }
+
+  job->pids = malloc(process_count * sizeof(pid_t));
+  job->finished = malloc(process_count * sizeof(bool));
+  job->command = get_command_string();
+
+  if (job->pids == NULL || job->finished == NULL || job->command == NULL) {
+    perror("ERROR: Failed to allocate background job data");
+    free(pids);
+    free(job->finished);
+    free(job->command);
+    free(job);
+    return;
+  }
+
+  job->id = next_job_id++;
+  job->process_count = process_count;
+  job->first_pid = pids[0];
+  for (size_t i = 0; i < process_count; ++i) {
+    job->pids[i] = pids[i];
+    job->finished[i] = false;
+  }
+  free(pids);
+  job->next = job_list;
+  job_list = job;
+
+  print_job_bg_start(job->id, job->first_pid, job->command);
 }

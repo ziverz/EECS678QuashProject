@@ -1,0 +1,4 @@
+1d0
+< /home/molly_mas/quash/EECS678QuashProject/test-cases/t3_find_grep/sandbox/.valgrind_expected.txt
+4a4
+> /home/molly_mas/quash/EECS678QuashProject/test-cases/t3_find_grep/sandbox/.valgrind_expected.txt
